@@ -10,11 +10,6 @@ async function getCtx(): Promise<AudioContext | null> {
   return ctx;
 }
 
-// Returns the current AudioContext state (for debug display)
-export function getAudioState(): string {
-  return ctx ? ctx.state : 'none';
-}
-
 // Call this inside a user gesture (tap handler) to unlock iOS audio.
 // Waits for onstatechange to confirm the context is truly running.
 export function unlockAudio(): Promise<void> {

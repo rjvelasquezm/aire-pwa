@@ -6,7 +6,7 @@ import { useBreathingTimer } from '../hooks/useBreathingTimer';
 import { getTechniqueById, Phase } from '../data/techniques';
 import { saveSession } from '../lib/storage';
 import { useStore } from '../lib/store';
-import { unlockAudio, AudioCues, getAudioState } from '../lib/audio';
+import { unlockAudio, AudioCues } from '../lib/audio';
 
 export default function Session() {
   const { id } = useParams<{ id: string }>();
@@ -17,8 +17,7 @@ export default function Session() {
   const setLastTechnique = useStore(s => s.setLastTechnique);
   const [isComplete, setIsComplete] = useState(false);
   const [savedElapsed, setSavedElapsed] = useState(0);
-  const [started, setStarted] = useState(false); // waiting for tap-to-begin
-  const [audioDebug, setAudioDebug] = useState('');
+  const [started, setStarted] = useState(false);
 
   const handlePhaseChange = useCallback((phase: Phase) => {
     switch (phase.label) {
@@ -48,9 +47,7 @@ export default function Session() {
 
   // Tap-to-begin: unlocks iOS audio (must happen inside a user gesture handler)
   const handleBegin = useCallback(async () => {
-    setAudioDebug('unlocking…');
     await unlockAudio();
-    setAudioDebug('ctx:' + getAudioState());
     setStarted(true);
     start();
     AudioCues.inhale();
@@ -93,9 +90,6 @@ export default function Session() {
           {state.isPaused ? '▶' : '⏸'}
         </button>
       </div>
-
-      {/* Audio debug */}
-      {audioDebug ? <div style={{ textAlign: 'center', fontSize: 11, color: 'orange', padding: '2px 0' }}>{audioDebug}</div> : null}
 
       {/* Progress bar */}
       <div style={{ height: 2, background: 'var(--bg-elevated)', margin: '0 16px' }}>
