@@ -1,6 +1,5 @@
-// Generate a sine wave WAV as an HTMLAudioElement.
-// Uses HTMLAudioElement instead of Web Audio API — far more reliable on iOS.
-function makeWAV(freqs: number[], duration: number, volume = 0.5): HTMLAudioElement {
+// Generate WAV samples into a data URI
+function makeDataURI(freqs: number[], duration: number, volume = 0.5): string {
   const sampleRate = 44100;
   const numSamples = Math.floor(sampleRate * duration);
   const buf = new ArrayBuffer(44 + numSamples * 2);
@@ -22,36 +21,47 @@ function makeWAV(freqs: number[], duration: number, volume = 0.5): HTMLAudioElem
     view.setInt16(44 + i * 2, Math.round((s / freqs.length) * env * volume * 32767), true);
   }
 
-  const audio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
-  audio.preload = 'auto';
-  return audio;
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return 'data:audio/wav;base64,' + btoa(binary);
 }
 
-// Pre-generate all tones at module load (no user gesture needed just to create them)
+function makeAudio(freqs: number[], duration: number, volume = 0.5): HTMLAudioElement {
+  const a = new Audio(makeDataURI(freqs, duration, volume));
+  a.preload = 'auto';
+  return a;
+}
+
+// Pre-generate tones
 const tones = {
-  inhale:    makeWAV([528, 792], 0.6, 0.6),
-  hold:      makeWAV([396], 0.5, 0.45),
-  exhale:    makeWAV([330, 264], 0.7, 0.6),
-  hold2:     makeWAV([370], 0.5, 0.4),
-  complete1: makeWAV([440], 0.4, 0.6),
-  complete2: makeWAV([550], 0.4, 0.6),
-  complete3: makeWAV([660], 0.7, 0.65),
+  inhale:    makeAudio([528, 792], 0.6, 0.6),
+  hold:      makeAudio([396], 0.5, 0.45),
+  exhale:    makeAudio([330, 264], 0.7, 0.6),
+  hold2:     makeAudio([370], 0.5, 0.4),
+  complete1: makeAudio([440], 0.4, 0.6),
+  complete2: makeAudio([550], 0.4, 0.6),
+  complete3: makeAudio([660], 0.7, 0.65),
 };
+
+// Silent looping audio — keeps iOS audio session in "playback" mode,
+// which bypasses the hardware mute/silent switch. Must be started inside a user gesture.
+const silentLoop = (() => {
+  const a = new Audio(makeDataURI([], 0.1, 0));
+  a.loop = true;
+  a.volume = 0;
+  return a;
+})();
+
+// Call once inside a user gesture (tap). Starts the silent loop which switches
+// the iOS audio session to "playback" category — audio plays even in silent mode.
+export function unlockAudio(): Promise<void> {
+  return silentLoop.play().catch(() => {});
+}
 
 function play(audio: HTMLAudioElement) {
   audio.currentTime = 0;
   audio.play().catch(() => {});
-}
-
-// Call once inside a user gesture (tap) to unlock HTMLAudioElement playback on iOS.
-// Playing one element inside a gesture unlocks the audio session for all elements on the page.
-export function unlockAudio(): Promise<void> {
-  const a = tones.inhale;
-  const origVol = a.volume;
-  a.volume = 0;
-  return a.play()
-    .then(() => { a.pause(); a.currentTime = 0; a.volume = origVol; })
-    .catch(() => { a.volume = origVol; });
 }
 
 export const AudioCues = {
