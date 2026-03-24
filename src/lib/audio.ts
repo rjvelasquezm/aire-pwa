@@ -1,5 +1,6 @@
-// Generate WAV samples into a data URI
-function makeDataURI(freqs: number[], duration: number, volume = 0.5): string {
+// Generates a soft bell/bowl tone as a WAV data URI.
+// Uses cosine attack (smooth 0→1) and exponential decay for a warm, airy sound.
+function makeTone(freq: number, duration: number, volume = 0.4): string {
   const sampleRate = 44100;
   const numSamples = Math.floor(sampleRate * duration);
   const buf = new ArrayBuffer(44 + numSamples * 2);
@@ -13,12 +14,24 @@ function makeDataURI(freqs: number[], duration: number, volume = 0.5): string {
   view.setUint16(32, 2, true); view.setUint16(34, 16, true);
   ws(36, 'data'); view.setUint32(40, numSamples * 2, true);
 
+  const attackTime = 0.08; // 80ms smooth cosine attack — no click
+
   for (let i = 0; i < numSamples; i++) {
     const t = i / sampleRate;
-    const env = Math.min(t / 0.02, 1) * Math.min((duration - t) / 0.1, 1);
-    let s = 0;
-    for (const f of freqs) s += Math.sin(2 * Math.PI * f * t);
-    view.setInt16(44 + i * 2, Math.round((s / freqs.length) * env * volume * 32767), true);
+
+    // Smooth cosine ramp up, then long exponential decay (bowl-like)
+    const env = t < attackTime
+      ? (1 - Math.cos(Math.PI * t / attackTime)) / 2
+      : Math.exp(-3.5 * (t - attackTime) / (duration - attackTime));
+
+    // Fundamental + gentle harmonics for warmth (like a singing bowl)
+    const sample = (
+      Math.sin(2 * Math.PI * freq * t) * 0.78 +
+      Math.sin(2 * Math.PI * freq * 2 * t) * 0.16 +
+      Math.sin(2 * Math.PI * freq * 3 * t) * 0.06
+    ) * env * volume;
+
+    view.setInt16(44 + i * 2, Math.round(sample * 32767), true);
   }
 
   const bytes = new Uint8Array(buf);
@@ -27,35 +40,36 @@ function makeDataURI(freqs: number[], duration: number, volume = 0.5): string {
   return 'data:audio/wav;base64,' + btoa(binary);
 }
 
-function makeAudio(freqs: number[], duration: number, volume = 0.5): HTMLAudioElement {
-  const a = new Audio(makeDataURI(freqs, duration, volume));
+function makeAudio(freq: number, duration: number, volume = 0.4): HTMLAudioElement {
+  const a = new Audio(makeTone(freq, duration, volume));
   a.preload = 'auto';
   return a;
 }
 
-// Pre-generate tones
+// Pentatonic-ish notes — sound natural and harmonious together
+// Inhale: A4 (440) bright/open  Hold: G4 (392) stable
+// Exhale: E4 (330) releasing    Hold2: D4 (294) grounded/quiet
 const tones = {
-  inhale:    makeAudio([528, 792], 0.6, 0.6),
-  hold:      makeAudio([396], 0.5, 0.45),
-  exhale:    makeAudio([330, 264], 0.7, 0.6),
-  hold2:     makeAudio([370], 0.5, 0.4),
-  complete1: makeAudio([440], 0.4, 0.6),
-  complete2: makeAudio([550], 0.4, 0.6),
-  complete3: makeAudio([660], 0.7, 0.65),
+  inhale:    makeAudio(440, 1.4, 0.42), // A4 — bright, welcoming
+  hold:      makeAudio(392, 1.0, 0.32), // G4 — steady
+  exhale:    makeAudio(330, 1.6, 0.40), // E4 — releasing, descending feel
+  hold2:     makeAudio(294, 0.9, 0.26), // D4 — quiet, grounded
+  complete1: makeAudio(523, 0.8, 0.38), // C5
+  complete2: makeAudio(659, 0.8, 0.38), // E5
+  complete3: makeAudio(784, 1.4, 0.42), // G5 — resolved, peaceful
 };
 
-// Silent looping audio — keeps iOS audio session in "playback" mode,
-// which bypasses the hardware mute/silent switch. Must be started inside a user gesture.
-// Uses a real (very quiet) sine wave — iOS won't promote a truly silent/zero file.
+// Silent looping audio — keeps iOS audio session in "playback" mode
+// so tones play even when the hardware mute switch is on.
 const silentLoop = (() => {
-  const a = new Audio(makeDataURI([440], 0.5, 0.001));
+  const a = new Audio(makeTone(440, 0.5, 0.001));
   a.loop = true;
   a.volume = 0.001;
   return a;
 })();
 
-// Call once inside a user gesture (tap). Starts the silent loop which switches
-// the iOS audio session to "playback" category — audio plays even in silent mode.
+// Call once inside a user gesture. Starts the silent loop which promotes
+// the iOS audio session to "playback" category (bypasses mute switch).
 export function unlockAudio(): Promise<void> {
   return silentLoop.play().catch(() => {});
 }
@@ -72,7 +86,7 @@ export const AudioCues = {
   hold2()    { play(tones.hold2); },
   complete() {
     play(tones.complete1);
-    setTimeout(() => play(tones.complete2), 250);
-    setTimeout(() => play(tones.complete3), 500);
+    setTimeout(() => play(tones.complete2), 300);
+    setTimeout(() => play(tones.complete3), 600);
   },
 };
