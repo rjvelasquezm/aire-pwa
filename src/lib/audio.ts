@@ -1,85 +1,67 @@
-let ctx: AudioContext | null = null;
+// Generate a sine wave WAV as an HTMLAudioElement.
+// Uses HTMLAudioElement instead of Web Audio API — far more reliable on iOS.
+function makeWAV(freqs: number[], duration: number, volume = 0.5): HTMLAudioElement {
+  const sampleRate = 44100;
+  const numSamples = Math.floor(sampleRate * duration);
+  const buf = new ArrayBuffer(44 + numSamples * 2);
+  const view = new DataView(buf);
+  const ws = (o: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
 
-async function getCtx(): Promise<AudioContext | null> {
-  if (!ctx) {
-    ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  ws(0, 'RIFF'); view.setUint32(4, 36 + numSamples * 2, true);
+  ws(8, 'WAVE'); ws(12, 'fmt ');
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  ws(36, 'data'); view.setUint32(40, numSamples * 2, true);
+
+  for (let i = 0; i < numSamples; i++) {
+    const t = i / sampleRate;
+    const env = Math.min(t / 0.02, 1) * Math.min((duration - t) / 0.1, 1);
+    let s = 0;
+    for (const f of freqs) s += Math.sin(2 * Math.PI * f * t);
+    view.setInt16(44 + i * 2, Math.round((s / freqs.length) * env * volume * 32767), true);
   }
-  if (ctx.state === 'suspended') {
-    await ctx.resume();
-  }
-  return ctx;
+
+  const audio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
+  audio.preload = 'auto';
+  return audio;
 }
 
-// Call this inside a user gesture (tap handler) to unlock iOS audio.
-// Waits for onstatechange to confirm the context is truly running.
+// Pre-generate all tones at module load (no user gesture needed just to create them)
+const tones = {
+  inhale:    makeWAV([528, 792], 0.6, 0.6),
+  hold:      makeWAV([396], 0.5, 0.45),
+  exhale:    makeWAV([330, 264], 0.7, 0.6),
+  hold2:     makeWAV([370], 0.5, 0.4),
+  complete1: makeWAV([440], 0.4, 0.6),
+  complete2: makeWAV([550], 0.4, 0.6),
+  complete3: makeWAV([660], 0.7, 0.65),
+};
+
+function play(audio: HTMLAudioElement) {
+  audio.currentTime = 0;
+  audio.play().catch(() => {});
+}
+
+// Call once inside a user gesture (tap) to unlock HTMLAudioElement playback on iOS.
+// Playing one element inside a gesture unlocks the audio session for all elements on the page.
 export function unlockAudio(): Promise<void> {
-  if (!ctx) {
-    ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-  }
-  const c = ctx;
-
-  // Play silent buffer synchronously within the gesture (required by iOS)
-  const buf = c.createBuffer(1, 1, 22050);
-  const src = c.createBufferSource();
-  src.buffer = buf;
-  src.connect(c.destination);
-  src.start(0);
-
-  if (c.state === 'running') return Promise.resolve();
-
-  // Wait for the context to confirm it's running via onstatechange
-  return new Promise<void>((resolve) => {
-    const onStateChange = () => {
-      if (c.state === 'running') {
-        c.removeEventListener('statechange', onStateChange);
-        resolve();
-      }
-    };
-    c.addEventListener('statechange', onStateChange);
-    c.resume().catch(() => resolve()); // fallback if resume() rejects
-    // Also resolve after timeout in case statechange never fires
-    setTimeout(resolve, 1000);
-  });
-}
-
-// Resume if page comes back from background
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && ctx?.state === 'suspended') ctx.resume();
-});
-
-async function playTone(frequency: number, durationSec: number, volume = 0.35, type: OscillatorType = 'sine') {
-  const c = await getCtx();
-  if (!c) return;
-
-  const osc = c.createOscillator();
-  const gain = c.createGain();
-  osc.connect(gain);
-  gain.connect(c.destination);
-
-  osc.type = type;
-  osc.frequency.setValueAtTime(frequency, c.currentTime);
-
-  gain.gain.setValueAtTime(0, c.currentTime);
-  gain.gain.linearRampToValueAtTime(volume, c.currentTime + 0.012);
-  gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + durationSec);
-
-  osc.start(c.currentTime);
-  osc.stop(c.currentTime + durationSec);
-}
-
-function chime(rootHz: number, vol = 0.35) {
-  playTone(rootHz, 0.7, vol);
-  setTimeout(() => playTone(rootHz * 1.5, 0.5, vol * 0.6), 80);
+  const a = tones.inhale;
+  const origVol = a.volume;
+  a.volume = 0;
+  return a.play()
+    .then(() => { a.pause(); a.currentTime = 0; a.volume = origVol; })
+    .catch(() => { a.volume = origVol; });
 }
 
 export const AudioCues = {
-  inhale()   { chime(528, 0.3); },
-  hold()     { playTone(396, 0.4, 0.22); },
-  exhale()   { chime(330, 0.3); setTimeout(() => playTone(264, 0.5, 0.18), 100); },
-  hold2()    { playTone(370, 0.35, 0.18); },
+  inhale()   { play(tones.inhale); },
+  hold()     { play(tones.hold); },
+  exhale()   { play(tones.exhale); },
+  hold2()    { play(tones.hold2); },
   complete() {
-    playTone(440, 0.4, 0.3);
-    setTimeout(() => playTone(550, 0.4, 0.3), 200);
-    setTimeout(() => playTone(660, 0.8, 0.35), 400);
+    play(tones.complete1);
+    setTimeout(() => play(tones.complete2), 250);
+    setTimeout(() => play(tones.complete3), 500);
   },
 };
