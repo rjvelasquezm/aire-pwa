@@ -46,10 +46,11 @@ const tones = {
 
 // Silent looping audio — keeps iOS audio session in "playback" mode,
 // which bypasses the hardware mute/silent switch. Must be started inside a user gesture.
+// Uses a real (very quiet) sine wave — iOS won't promote a truly silent/zero file.
 const silentLoop = (() => {
-  const a = new Audio(makeDataURI([], 0.1, 0));
+  const a = new Audio(makeDataURI([440], 0.5, 0.001));
   a.loop = true;
-  a.volume = 0;
+  a.volume = 0.001;
   return a;
 })();
 
